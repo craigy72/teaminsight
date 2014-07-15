@@ -6,9 +6,9 @@ use File::Copy;
 ###### CONFIGURATION ##################
 ## Ensure Perl is installed on Slave servers ##
 
-my $servers = "lon5dpu277:20140101>20140130,lon5dpu272:20140201>20140230"; # Specify the servers and the dates they should run. syntax server1:staredate>enddate,server2:staredate>enddate,
+my $servers = "lon5dpu277:20140201>20140228,lon5dpu272:20140301>20140331,lon5dpu271:20140401>20140430,lon5dpu273:20140501>20140531,lon5dpu275:20140601>20140630,lon5dpu278:20140701>20140711,lon5dpu279:20130601>20130630,lon5dpu276:20130701>20130731,lon5dpu264:20130801>20130831,lon5dpu265:20130901>20130930,lon5dpu280:20131001>20131031,lon5dpu263:20131101>20131130,lon5dpu262:20131201>20131231"; # Specify the servers and the dates they should run. syntax server1:staredate>enddate,server2:staredate>enddate,
 my $idFieldNum = 236; #specify the field number for the unique identifier in the SiteCat files.
-my $fileLocation = "//lon5nas101/tesco/UCP_Test/UCP_Test_Input/"; # Raw SiteCat files
+my $fileLocation = "//lon5nas101/tesco/Feeds/SiteCat/tescoukgroceriesprod/staging/"; # Raw SiteCat files
 my $finalDCFileLocation = "//lon5nas101/tesco/UCP_Test/UCP_Test_Output_DC/"; #Main DC output location
 my $finalLUFileLocation = "//lon5nas101/tesco/UCP_Test/UCP_Test_Output_LU/"; #Main LU output location
 my $finalDoneFileLocation = "//lon5nas101/tesco/UCP_Test/UCP_Test_Done/"; #Main Done output location
@@ -33,7 +33,6 @@ my $dcPhase1Directory = $rootDirectory."DC_Phase1\\";
 my $dcOutputDirectory = $rootDirectory."DC_Output\\";
 my $luOutputDirectory = $rootDirectory."LU_Output\\";
 
-my @doneFiles;
 my @inputFiles;
 
 if($serverType eq "Master")
@@ -79,8 +78,25 @@ if($serverType eq "Master")
 	#	}
 	#}
 	
+	# my @lookupFiles = ScanDirectory($finalLUFileLocation,'.txt');
+	#
 	# Merge all lookups together
+	#my %hash;
+	#my $key;
 
+	#foreach(@lookupFiles)
+	#{
+		#open (DATA,$finalLUFileLocation.$_);
+		#while (<DATA>) {
+		#	my @row = split;
+		#	if (@row > 1) {
+		#		$key = shift @row;
+		#	} else {
+		#		push @{$hash{$key}}, shift @row;
+		#	}
+		#}
+		#close (DATA);
+	#}
 }
 
 if($serverType eq "Slave")
@@ -88,20 +104,23 @@ if($serverType eq "Slave")
 	$logDirectory = "E:\\Scripts\\UCPSlave\\";
 	unlink($logDirectory."Log.txt");
 	addToLog("Server Type: $serverType | Start Date: $startDate | End Date: $endDate");
-	addToLog("Copying Files From: $fileLocation TO $stagingDirectory LIMIT: $startDate -> $endDate");
-	copyFiles($fileLocation,$stagingDirectory,$startDate,$endDate);
-	
-	#my @stagingFiles = ScanDirectory($stagingDirectory,'.tsv.gz');
-	my @stagingFiles = ScanDirectory($stagingDirectory,'.tsv.gz',$startDate,$endDate);
+
+	#copyFiles($fileLocation,$stagingDirectory,$startDate,$endDate);
 	
 	#Test to see what files are in ScanDirectory
+	my @nasFiles = ScanDirectory($fileLocation,'.tsv.gz',$startDate,$endDate);
 	my $filename = "";
 	
-	foreach(@stagingFiles)
+	foreach(@nasFiles)
 	{
-		#For each file if it does not exist then unzip
-		#next unless checkExists($_.".txt") == 0;
-		next unless $_ =~ /(.*)tsv.gz$/; #Double catch
+		addToLog("about to process $_");
+	}
+	
+	foreach(@nasFiles)
+	{
+		next unless checkExists($finalDoneFileLocation,$_) == 0;
+		addToLog("Copying File From: $fileLocation $_ TO $stagingDirectory $_");
+		copy($fileLocation.$_,$stagingDirectory.$_);
 		$filename = $_;
 		my $filesize = -s $stagingDirectory.$_;
 		print "Begin Unzipping File: ".$_."\n";
@@ -116,14 +135,14 @@ if($serverType eq "Slave")
 		open (DC_OUTFILE, '>>', $dcOutputDirectory.$_.".txt");
 		#Create output file for Lookup
 		open (LU_OUTFILE, '>>', $luOutputDirectory.$_.".txt");
-		#next unless checkExists($_) == 0;
+		
 		#Open the Input File and also copy name so can delete later
-
 		open (INFILE,$dcPhase1Directory.$_.".txt");
-		my $dcPhase1FileName = $dcPhase1Directory.$filename.".txt"; #This had to be created to be able to delete the file.
-		my $luPhase1FileName = $luOutputDirectory.$filename.".txt"; #This had to be created to be able to delete the file.
-		my $dcOutputFileName = $dcOutputDirectory.$filename.".txt"; #This had to be created to be able to delete the file.
-		my $zipPhase1FileName = $stagingDirectory.$filename; #This had to be created to be able to delete the file.
+		
+		my $dcPhase1FileName = $dcPhase1Directory.$filename.".txt"; #Create full directory path
+		my $luPhase1FileName = $luOutputDirectory.$filename.".txt"; #Create full directory path
+		my $dcOutputFileName = $dcOutputDirectory.$filename.".txt"; #Create full directory path
+		my $zipPhase1FileName = $stagingDirectory.$filename; #Create full directory path
 		
 		#Initiate HashMap
 		my %SCID_Evar_Mapping = ();
@@ -169,8 +188,8 @@ if($serverType eq "Slave")
 	close (LU_OUTFILE);
 
 	#once complete, copy the file to the final destination (NAS)
-	copy ($dcPhase1FileName,$finalDCFileLocation);
-	addToLog ("Copying DC to final destination: $dcPhase1FileName To $finalDCFileLocation");
+	copy ($dcOutputFileName,$finalDCFileLocation);
+	addToLog ("Copying DC to final destination: $dcOutputFileName To $finalDCFileLocation");
 	copy ($luPhase1FileName,$finalLUFileLocation);
 	addToLog ("Copying LU to final destination: $luPhase1FileName To $finalLUFileLocation");
 	
@@ -208,7 +227,15 @@ sub ScanDirectory{
     my @return = "";
 
     foreach my $name (@names){
-	# Use a regular expression to ignore files beginning with a period
+	   # use start and end date filtering if present.
+	   my $fileDate = $name; 
+	   $fileDate =~ /(\d{8})/;
+	   $fileDate = $1;
+	   if($startDate != "" && $endDate != "") {
+	   next unless($fileDate >= $startDate && $fileDate <= $endDate)
+	   }
+	   
+	   # Use a regular expression to ignore files beginning with a period
        next if ($name =~ m/^\./);
        next unless $name =~ /(.*$extension$)/;
 		  #print $name."\n";
@@ -273,4 +300,38 @@ sub createDoneFile {
 			open(FH,">".$path.".done") or warn "$!";
 			close FH;
 	}
+}
+
+sub checkExists
+{
+	my $directory = shift;
+	my $input = shift;
+	my $output = "";
+	
+	my @doneFiles = ScanDirectory($directory);
+	
+	#set the input to ignore any file extensions
+	if ($input =~ m/(\w*-\w*)/)
+	{
+		$input = $1;
+	}
+	
+	foreach (@doneFiles){
+		#print "INPUT: ".$input."\n";
+		#print "LOOP: ".$_."\n";
+		
+		if ($_ =~ m/(\w*-\w*)/)
+		{
+			$output = $1;
+		}
+		
+		 if ($input eq $output){
+			addToLog ("Ignoring File: $input already exists");
+			 #file exists
+			 return 1;
+		 }
+	}
+	
+	return 0;
+	
 }
